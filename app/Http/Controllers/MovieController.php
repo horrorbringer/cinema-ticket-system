@@ -9,13 +9,7 @@ class MovieController extends Controller
 {
     public function index(Request $request)
     {
-        $query = Movie::with('genres');
-
-        if ($request->filled('status')) {
-            $query->where('status', $request->status);
-        } else {
-            $query->where('status', '!=', 'ended');
-        }
+        $query = Movie::with('genres', 'showtimes')->where('status', '!=', 'ended');
 
         if ($request->filled('search')) {
             $query->where('title', 'like', '%' . $request->search . '%');
@@ -30,25 +24,41 @@ class MovieController extends Controller
         }
 
         if ($request->filled('premiere_date')) {
-            $premiereDate = $request->premiere_date;
-            $query->where('release_date', $premiereDate);
+            $query->where('release_date', $request->premiere_date);
         }
 
-        $movies = $query->latest()->paginate(12);
+        $sort = $request->get('sort', 'latest');
+        $queryOrdered = match ($sort) {
+            'rating' => $query->orderBy('rating', 'desc'),
+            'title' => $query->orderBy('title'),
+            'release_date' => $query->orderBy('release_date', 'desc'),
+            'duration' => $query->orderBy('duration'),
+            default => $query->latest(),
+        };
 
-        if ($request->wantsJson() || $request->ajax() || $request->header('HX-Request')) {
-            return view('movies.partials.movie-grid', compact('movies'));
+        $allMovies = $queryOrdered->get();
+
+        $nowShowing = $allMovies->where('status', 'now_showing');
+        $comingSoon = $allMovies->where('status', 'coming_soon');
+        $total = $allMovies->count();
+
+        if ($request->header('HX-Request')) {
+            return view('movies.partials.movie-grid', compact('nowShowing', 'comingSoon', 'total'));
         }
 
         $genres = \App\Models\Genre::all();
         $languages = Movie::distinct()->pluck('language');
+        $featured = Movie::with('genres')
+            ->where('status', 'now_showing')
+            ->orderBy('rating', 'desc')
+            ->first();
 
-        return view('movies.index', compact('movies', 'genres', 'languages'));
+        return view('movies.index', compact('nowShowing', 'comingSoon', 'total', 'genres', 'languages', 'featured'));
     }
 
     public function show(Movie $movie)
     {
-        $movie->load('genres', 'showtimes.hall');
+        $movie->load('genres', 'showtimes.hall', 'approvedReviews.user');
 
         $showtimesByDate = $movie->showtimes()
             ->with('hall')
@@ -57,6 +67,39 @@ class MovieController extends Controller
             ->get()
             ->groupBy(fn ($showtime) => $showtime->start_time->format('Y-m-d'));
 
-        return view('movies.show', compact('movie', 'showtimesByDate'));
+        $averageRating = $movie->averageRating();
+
+        return view('movies.show', compact('movie', 'showtimesByDate', 'averageRating'));
+    }
+
+    public function showtimesDate(Movie $movie, string $date)
+    {
+        $showtimes = $movie->showtimes()
+            ->with('hall')
+            ->whereDate('start_time', $date)
+            ->where('start_time', '>=', now())
+            ->orderBy('start_time')
+            ->get();
+
+        if (!request()->header('HX-Request')) {
+            abort(404);
+        }
+
+        return view('movies.partials.showtimes-date', compact('showtimes'));
+    }
+
+    public function related(Movie $movie)
+    {
+        $genreIds = $movie->genres->pluck('id');
+
+        $related = Movie::with('genres', 'showtimes')
+            ->where('id', '!=', $movie->id)
+            ->where('status', $movie->status)
+            ->whereHas('genres', fn ($q) => $q->whereIn('genres.id', $genreIds))
+            ->inRandomOrder()
+            ->limit(8)
+            ->get();
+
+        return view('movies.partials.related-carousel', compact('related'));
     }
 }

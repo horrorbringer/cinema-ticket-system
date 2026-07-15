@@ -5,8 +5,8 @@ namespace App\Http\Controllers;
 use App\Actions\CancelBookingAction;
 use App\Actions\ConfirmBookingAction;
 use App\Actions\CreateBookingAction;
-use App\Actions\GenerateTicketAction;
 use App\Actions\SendNotificationAction;
+use App\Jobs\GenerateTicketsJob;
 use App\Models\Booking;
 use App\Models\Showtime;
 use App\Services\SeatLockService;
@@ -61,7 +61,7 @@ class BookingController extends Controller
         return view('bookings.payment', compact('booking'));
     }
 
-    public function processPayment(Booking $booking, Request $request, ConfirmBookingAction $confirmBooking, GenerateTicketAction $generateTicket, SendNotificationAction $sendNotification)
+    public function processPayment(Booking $booking, Request $request, ConfirmBookingAction $confirmBooking, SendNotificationAction $sendNotification)
     {
         $result = $confirmBooking->execute($booking);
 
@@ -70,7 +70,8 @@ class BookingController extends Controller
                 ->with('error', $result['message']);
         }
 
-        $generateTicket->execute($booking);
+        GenerateTicketsJob::dispatch($booking);
+
         $sendNotification->execute($booking, 'booking_confirmed');
         $sendNotification->execute($booking, 'payment_receipt');
         $sendNotification->execute($booking, 'ticket_generated');

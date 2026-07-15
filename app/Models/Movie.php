@@ -14,6 +14,15 @@ class Movie extends Model
         'language', 'release_date', 'rating', 'status',
     ];
 
+    protected function casts(): array
+    {
+        return [
+            'release_date' => 'datetime',
+            'rating' => 'decimal:1',
+            'duration' => 'integer',
+        ];
+    }
+
     public function genres()
     {
         return $this->belongsToMany(Genre::class, 'movie_genre');
